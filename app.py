@@ -4,14 +4,14 @@ import plotly.express as px
 from datetime import datetime
 import json
 import base64
-import requests  # Thay thế urllib bằng requests ổn định hơn rất nhiều
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
 # ================= 1. CẤU HÌNH HỆ THỐNG =================
 st.set_page_config(page_title="Bách Hóa Út Huệ - ERP", page_icon="🍼", layout="wide")
 
-# BẠN HÃY DÁN CÁC LINK CỦA BẠN VÀO DƯỚI ĐÂY:
+# BẠN HÃY DÁN LẠI CÁC LINK CỦA BẠN VÀO DƯỚI ĐÂY NHÉ:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1US5XRg-SnhQt8dy2CVlBMTifiu0lWjoqYS6Q0_GbbZk/edit?gid=0#gid=0"
 GAS_URL = "https://script.google.com/macros/s/AKfycbwWlE7EenaMd_6l27rHVGwe4K9-u66-pg4xByj7v49xbS2wm8336sneVEXvf2D_iby_/exec"
 DRIVE_FOLDER_ID = "1Qm_aSUDZhuxY_kCot1JhzRCyJsJYLFja"
@@ -63,7 +63,7 @@ except Exception as e:
     st.error(f"Lỗi kết nối CSDL: {e}")
     st.stop()
 
-# ================= CÔNG NGHỆ UPLOAD MỚI (DÙNG REQUESTS) =================
+# ================= CÔNG NGHỆ UPLOAD (DÙNG REQUESTS & WEB APP) =================
 def upload_to_drive(file_buffer, file_name, mime_type):
     encoded_string = base64.b64encode(file_buffer).decode('utf-8')
     payload = {
@@ -72,9 +72,7 @@ def upload_to_drive(file_buffer, file_name, mime_type):
         "mimeType": mime_type,
         "fileData": encoded_string
     }
-    # Sử dụng requests để tránh lỗi HTTPError của urllib
     response = requests.post(GAS_URL, json=payload)
-    
     if response.status_code == 200:
         return response.text
     else:
@@ -137,7 +135,6 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
                 sheet_nhaphang.append_rows(rows_to_insert, value_input_option='USER_ENTERED')
                 st.success(f"🎉 Đã lưu thành công {len(rows_to_insert)} sản phẩm cùng Hóa đơn!")
 
-    # ---------- BỔ SUNG HÓA ĐƠN CŨ ----------
     st.divider()
     st.subheader("📥 Bổ sung hóa đơn cho ngày cũ")
     
@@ -275,15 +272,70 @@ elif menu == "💰 Tính Lãi / Dòng Tiền":
                 
             sheet_taichinh.append_row([thang_tinh, tien_rut, tien_giu, chi_phi_khac, loi_nhuan_cu], value_input_option='USER_ENTERED')
 
+# --- ĐÃ NÂNG CẤP TRANG BÁO CÁO TỔNG HỢP (VẼ BIỂU ĐỒ TỪ DATA CŨ) ---
 elif menu == "📊 Báo Cáo Tổng Hợp":
     st.header("📊 Bảng Điều Khiển Bách Hóa Út Huệ")
     df_db = load_df(sheet_nhaphang)
+    
     if not df_db.empty:
+        # Ép kiểu dữ liệu để phân tích (không làm ảnh hưởng Sheets)
         df_db['Số lượng'] = pd.to_numeric(df_db['Số lượng'], errors='coerce').fillna(0)
+        df_db['Giá nhập'] = pd.to_numeric(df_db['Giá nhập'], errors='coerce').fillna(0)
         df_db['Tổng tiền'] = pd.to_numeric(df_db['Tổng tiền'], errors='coerce').fillna(0)
+        df_db['Ngày nhập'] = pd.to_datetime(df_db['Ngày nhập'], errors='coerce')
         
-        st.subheader("1. Cơ cấu Nhập hàng theo Kho")
-        tong_kho = df_db.groupby('Tên Kho')['Số lượng'].sum().reset_index()
-        st.plotly_chart(px.pie(tong_kho, values='Số lượng', names='Tên Kho', hole=0.4), use_container_width=True)
+        # Bỏ qua các dòng số lượng 0 (như dòng Hóa đơn bổ sung)
+        df_valid = df_db[df_db['Số lượng'] > 0]
+        
+        st.divider()
+        st.subheader("1. Tổng quan các Kho hàng (Sản phẩm & Dòng tiền)")
+        
+        # Gom nhóm dữ liệu theo Kho
+        tong_kho = df_valid.groupby('Tên Kho').agg(
+            Tong_SP=('Số lượng', 'sum'),
+            Tong_Tien=('Tổng tiền', 'sum')
+        ).reset_index()
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_sp = px.pie(tong_kho, values='Tong_SP', names='Tên Kho', title='Tỷ trọng TỔNG SẢN PHẨM đã nhập', hole=0.4)
+            st.plotly_chart(fig_sp, use_container_width=True)
+        with c2:
+            fig_tien = px.pie(tong_kho, values='Tong_Tien', names='Tên Kho', title='Tỷ trọng TỔNG TIỀN (VỐN) đã nhập', hole=0.4)
+            st.plotly_chart(fig_tien, use_container_width=True)
+            
+        st.markdown("**Bảng Thống kê chi tiết Vốn & Sản phẩm:**")
+        tong_kho.columns = ['Tên Kho', 'Tổng số lượng SP', 'Tổng vốn nhập (VNĐ)']
+        st.dataframe(tong_kho.style.format({'Tổng số lượng SP': '{:,.0f}', 'Tổng vốn nhập (VNĐ)': '{:,.0f}'}), use_container_width=True, hide_index=True)
+        
+        st.divider()
+        st.subheader("2. Phân tích chi tiết từng Kho hàng")
+        kho_duoc_chon = st.selectbox("Chọn Kho bạn muốn xem:", ["Tất cả các Kho"] + DANH_SACH_KHO)
+        
+        if kho_duoc_chon == "Tất cả các Kho":
+            df_kho = df_valid
+        else:
+            df_kho = df_valid[df_valid['Tên Kho'] == kho_duoc_chon]
+            
+        if not df_kho.empty:
+            # Biểu đồ cột: Số lượng từng mặt hàng trong kho
+            sp_nhap = df_kho.groupby('Tên sản phẩm')['Số lượng'].sum().reset_index()
+            fig_bar = px.bar(sp_nhap, x='Tên sản phẩm', y='Số lượng', title=f"Số lượng các mặt hàng đã nhập ({kho_duoc_chon})", color='Tên sản phẩm')
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+            st.subheader("3. Biến thiên Giá vốn của từng sản phẩm")
+            st.caption("Giúp bạn theo dõi NPP (Nhà phân phối) đang tăng hay giảm giá theo thời gian.")
+            sp_duoc_chon = st.multiselect("Chọn các sản phẩm để so sánh giá:", DANH_SACH_SAN_PHAM, default=DANH_SACH_SAN_PHAM[:2])
+            
+            if sp_duoc_chon:
+                df_gia = df_kho[df_kho['Tên sản phẩm'].isin(sp_duoc_chon)].sort_values(by='Ngày nhập')
+                fig_line = px.line(df_gia, x='Ngày nhập', y='Giá nhập', color='Tên sản phẩm', markers=True, title=f"Biểu đồ Xu hướng Giá nhập")
+                fig_line.update_layout(yaxis_tickformat=',.0f')
+                st.plotly_chart(fig_line, use_container_width=True)
+            else:
+                st.info("Vui lòng chọn ít nhất 1 sản phẩm để vẽ biểu đồ biến thiên giá.")
+        else:
+            st.warning(f"Kho '{kho_duoc_chon}' hiện chưa có dữ liệu nhập hàng.")
+            
     else:
-        st.info("Chưa có dữ liệu nhập hàng.")
+        st.info("Chưa có dữ liệu nhập hàng trên Google Sheets.")
