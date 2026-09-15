@@ -65,7 +65,6 @@ except Exception as e:
     st.error(f"Lỗi kết nối: {e}")
     st.stop()
 
-# ĐÃ VÁ LỖI GOOGLE DRIVE CHẶN UPLOAD (resumable=False)
 def upload_to_drive(file_buffer, file_name, mime_type):
     media = MediaIoBaseUpload(io.BytesIO(file_buffer), mimetype=mime_type, resumable=False)
     file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
@@ -94,7 +93,6 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
     with col1: ngay_nhap = st.date_input("📅 Ngày nhập hàng", datetime.today())
     with col2: hoa_don_files = st.file_uploader("📎 Tải lên Hóa đơn nhập hàng", accept_multiple_files=True)
     
-    # ĐÃ VÁ LỖI KẸT GIAO DIỆN CỘT KHO HÀNG
     if 'input_data' not in st.session_state or "Tên Kho" not in st.session_state.input_data.columns:
         st.session_state.input_data = pd.DataFrame([{"Tên Kho": DANH_SACH_KHO[0], "Tên sản phẩm": DANH_SACH_SAN_PHAM[0], "Số lượng": 1, "Date SP": datetime.today().date(), "Giá nhập": 0}])
 
@@ -129,6 +127,55 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
             if rows_to_insert:
                 sheet_nhaphang.append_rows(rows_to_insert, value_input_option='USER_ENTERED')
                 st.success(f"🎉 Đã lưu thành công {len(rows_to_insert)} sản phẩm cùng Hóa đơn!")
+
+    # ---------- TÍNH NĂNG BỔ SUNG HÓA ĐƠN ----------
+    st.divider()
+    st.subheader("📥 Bổ sung hóa đơn cho ngày cũ")
+    st.caption("Hệ thống sẽ tìm ngày bạn chọn trên Google Sheets và nối thêm file vào đúng dòng đó.")
+    
+    bs_col1, bs_col2 = st.columns(2)
+    with bs_col1:
+        bs_ngay = st.date_input("Chọn ngày cần bổ sung", datetime.today(), key="bs_ngay")
+    with bs_col2:
+        bs_files = st.file_uploader("Tải tệp hóa đơn bổ sung", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf'], key="bs_files")
+        
+    if st.button("📤 XÁC NHẬN BỔ SUNG", use_container_width=True):
+        if bs_files:
+            with st.spinner("Đang tải hóa đơn bổ sung lên Drive..."):
+                bs_file_links = []
+                for file in bs_files:
+                    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+                    link = upload_to_drive(file.getbuffer(), f"BS_{timestamp}_{file.name}", file.type)
+                    bs_file_links.append(link)
+                str_bs_links = " | ".join(bs_file_links)
+                
+                str_bs_ngay = bs_ngay.strftime("%Y-%m-%d")
+                
+                try:
+                    records = sheet_nhaphang.get_all_records()
+                    found_row_idx = -1
+                    existing_links = ""
+                    
+                    # Tìm dòng có ngày tương ứng trong Google Sheets
+                    for idx, row in enumerate(records):
+                        if str(row.get('Ngày nhập')) == str_bs_ngay:
+                            found_row_idx = idx + 2 # +2 vì index bắt đầu từ 0 và có dòng tiêu đề
+                            existing_links = str(row.get('Link Hóa đơn', ''))
+                            break
+                    
+                    if found_row_idx != -1:
+                        new_links = existing_links + " | " + str_bs_links if existing_links else str_bs_links
+                        sheet_nhaphang.update_cell(found_row_idx, 8, new_links) # Cột H (số 8) là Link Hóa Đơn
+                    else:
+                        # Nếu ngày đó chưa nhập hàng, tạo 1 dòng trống chỉ lưu hóa đơn
+                        sheet_nhaphang.append_row([str_bs_ngay, DANH_SACH_KHO[0], "Hóa đơn bổ sung", 0, str_bs_ngay, 0, 0, str_bs_links], value_input_option='USER_ENTERED')
+                        
+                    st.success(f"✅ Đã bổ sung hóa đơn vào ngày {str_bs_ngay} thành công!")
+                except Exception as e:
+                    st.error(f"Có lỗi xảy ra: {e}")
+        else:
+            st.warning("Vui lòng đính kèm ít nhất 1 tệp hóa đơn.")
+
 
 elif menu == "🛠️ Chi Phí Nguyên Vật Liệu":
     st.header("🛠️ Quản lý Chi Phí Nguyên Vật Liệu")
@@ -213,7 +260,7 @@ elif menu == "💰 Tính Lãi / Dòng Tiền":
                 df_ton_cuoi = df_ton[df_ton['Ngày chốt'] == ngay_chot_cuoi]
                 tong_ton = pd.to_numeric(df_ton_cuoi['Tổng giá trị'], errors='coerce').sum()
             
-            # Áp dụng công thức
+            # Áp dụng công thức có trừ thêm phí khác
             loi_nhuan_thuc = (tien_rut + tien_giu) - tong_nhap - tong_nvl - chi_phi_khac + tong_ton - loi_nhuan_cu
             tong_chi_phi_all = tong_nhap + tong_nvl + chi_phi_khac
             
