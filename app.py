@@ -3,18 +3,17 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import json
-import io
-
+import base64
+import urllib.request
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
 # ================= 1. CẤU HÌNH HỆ THỐNG =================
 st.set_page_config(page_title="Bách Hóa Út Huệ - ERP", page_icon="🍼", layout="wide")
 
-# VUI LÒNG DÁN LINK GOOGLE SHEETS CỦA BẠN VÀO TRONG DẤU NGOẶC KÉP Ở DÒNG DƯỚI ĐÂY:
+# BẠN HÃY DÁN CÁC LINK CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1US5XRg-SnhQt8dy2CVlBMTifiu0lWjoqYS6Q0_GbbZk/edit?gid=0#gid=0"
+GAS_URL = "https://script.google.com/macros/s/AKfycbyO_LOhVAS1lNjWEUTgL4fhvAo9GBUwHxcuevtLK7Gw_TnIHtwRDHDeXEYxJBn1yrOG/exec"
 DRIVE_FOLDER_ID = "1Qm_aSUDZhuxY_kCot1JhzRCyJsJYLFja"
 
 DANH_SACH_SAN_PHAM = [
@@ -31,18 +30,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ================= 2. KẾT NỐI & DATABASE =================
+# ================= 2. KẾT NỐI DATABASE =================
 @st.cache_resource
 def init_google_clients():
     creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    scopes = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    drive_service = build('drive', 'v3', credentials=creds)
-    return gc, drive_service
+    return gc
 
 try:
-    gc, drive_service = init_google_clients()
+    gc = init_google_clients()
     sh = gc.open_by_url(SHEET_URL)
     sheet_nhaphang = sh.get_worksheet(0) 
     
@@ -62,14 +60,22 @@ try:
         sheet_taichinh.append_row(["Tháng", "Tiền đã rút", "Tiền sàn giữ", "Chi phí khác", "Lợi nhuận cũ"])
 
 except Exception as e:
-    st.error(f"Lỗi kết nối: {e}")
+    st.error(f"Lỗi kết nối CSDL: {e}")
     st.stop()
 
+# ================= CÔNG NGHỆ UPLOAD MỚI (CHẠY BẰNG QUYỀN CỦA BẠN) =================
 def upload_to_drive(file_buffer, file_name, mime_type):
-    media = MediaIoBaseUpload(io.BytesIO(file_buffer), mimetype=mime_type, resumable=False)
-    file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
-    uploaded_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    return uploaded_file.get('webViewLink')
+    encoded_string = base64.b64encode(file_buffer).decode('utf-8')
+    payload = {
+        "folderId": DRIVE_FOLDER_ID,
+        "fileName": file_name,
+        "mimeType": mime_type,
+        "fileData": encoded_string
+    }
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(GAS_URL, data=data, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req) as response:
+        return response.read().decode('utf-8')
 
 def load_df(sheet_obj):
     records = sheet_obj.get_all_records()
@@ -108,7 +114,7 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
     )
     
     if st.button("💾 LƯU LÔ HÀNG VÀO DATA", use_container_width=True):
-        with st.spinner("Đang xử lý hóa đơn và đẩy lên Google..."):
+        with st.spinner("Đang đẩy hóa đơn qua Đường ống ngầm lên Google Drive 5TB..."):
             file_links = []
             if hoa_don_files:
                 for f in hoa_don_files:
@@ -128,10 +134,9 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
                 sheet_nhaphang.append_rows(rows_to_insert, value_input_option='USER_ENTERED')
                 st.success(f"🎉 Đã lưu thành công {len(rows_to_insert)} sản phẩm cùng Hóa đơn!")
 
-    # ---------- TÍNH NĂNG BỔ SUNG HÓA ĐƠN ----------
+    # ---------- BỔ SUNG HÓA ĐƠN CŨ ----------
     st.divider()
     st.subheader("📥 Bổ sung hóa đơn cho ngày cũ")
-    st.caption("Hệ thống sẽ tìm ngày bạn chọn trên Google Sheets và nối thêm file vào đúng dòng đó.")
     
     bs_col1, bs_col2 = st.columns(2)
     with bs_col1:
@@ -144,8 +149,7 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
             with st.spinner("Đang tải hóa đơn bổ sung lên Drive..."):
                 bs_file_links = []
                 for file in bs_files:
-                    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
-                    link = upload_to_drive(file.getbuffer(), f"BS_{timestamp}_{file.name}", file.type)
+                    link = upload_to_drive(file.getbuffer(), f"BS_{datetime.now().strftime('%d%m%Y_%H%M%S')}_{file.name}", file.type)
                     bs_file_links.append(link)
                 str_bs_links = " | ".join(bs_file_links)
                 
@@ -155,27 +159,23 @@ if menu == "🛒 Nhập Hàng & Hóa Đơn":
                     records = sheet_nhaphang.get_all_records()
                     found_row_idx = -1
                     existing_links = ""
-                    
-                    # Tìm dòng có ngày tương ứng trong Google Sheets
                     for idx, row in enumerate(records):
                         if str(row.get('Ngày nhập')) == str_bs_ngay:
-                            found_row_idx = idx + 2 # +2 vì index bắt đầu từ 0 và có dòng tiêu đề
+                            found_row_idx = idx + 2 
                             existing_links = str(row.get('Link Hóa đơn', ''))
                             break
                     
                     if found_row_idx != -1:
                         new_links = existing_links + " | " + str_bs_links if existing_links else str_bs_links
-                        sheet_nhaphang.update_cell(found_row_idx, 8, new_links) # Cột H (số 8) là Link Hóa Đơn
+                        sheet_nhaphang.update_cell(found_row_idx, 8, new_links) 
                     else:
-                        # Nếu ngày đó chưa nhập hàng, tạo 1 dòng trống chỉ lưu hóa đơn
                         sheet_nhaphang.append_row([str_bs_ngay, DANH_SACH_KHO[0], "Hóa đơn bổ sung", 0, str_bs_ngay, 0, 0, str_bs_links], value_input_option='USER_ENTERED')
                         
                     st.success(f"✅ Đã bổ sung hóa đơn vào ngày {str_bs_ngay} thành công!")
                 except Exception as e:
-                    st.error(f"Có lỗi xảy ra: {e}")
+                    st.error(f"Lỗi kết nối khi cập nhật Sheets: {e}")
         else:
             st.warning("Vui lòng đính kèm ít nhất 1 tệp hóa đơn.")
-
 
 elif menu == "🛠️ Chi Phí Nguyên Vật Liệu":
     st.header("🛠️ Quản lý Chi Phí Nguyên Vật Liệu")
@@ -186,7 +186,7 @@ elif menu == "🛠️ Chi Phí Nguyên Vật Liệu":
             ten_nvl = st.text_input("Nội dung chi (VD: Băng keo, thùng carton...)")
         with c2:
             tien_nvl = st.number_input("Số tiền chi (VNĐ)", min_value=0, step=10000)
-            hd_nvl = st.file_uploader("Tải lên hóa đơn NVL (nếu có)", type=['png', 'jpg', 'jpeg', 'pdf'])
+            hd_nvl = st.file_uploader("Tải lên hóa đơn NVL", type=['png', 'jpg', 'jpeg', 'pdf'])
         if st.form_submit_button("💾 LƯU CHI PHÍ NVL", use_container_width=True) and ten_nvl and tien_nvl > 0:
             with st.spinner("Đang lưu..."):
                 link_hd_nvl = upload_to_drive(hd_nvl.getbuffer(), f"NVL_{datetime.now().strftime('%d%m%Y')}_{hd_nvl.name}", hd_nvl.type) if hd_nvl else ""
@@ -232,16 +232,15 @@ elif menu == "📦 Tồn Kho Thực Tế":
 
 elif menu == "💰 Tính Lãi / Dòng Tiền":
     st.header("💰 Bảng Tính Lãi Thực Tế (P&L)")
-    
     st.info("Công thức: (Tiền rút + Sàn giữ) - (Vốn Nhập hàng) - (Chi phí NVL) - (Chi phí khác) + (Giá trị Tồn kho) - (Lời các tháng trước)")
     
     col1, col2 = st.columns(2)
     with col1:
         thang_tinh = st.text_input("Kỳ kế toán (VD: Tháng 9/2026)", value="Tháng 9/2026")
-        tien_rut = st.number_input("1. Tổng tiền ĐÃ RÚT từ sàn (Từ lúc bán tới nay)", min_value=0, step=100000)
+        tien_rut = st.number_input("1. Tổng tiền ĐÃ RÚT từ sàn", min_value=0, step=100000)
         tien_giu = st.number_input("2. Số tiền SÀN CÒN GIỮ hiện tại", min_value=0, step=100000)
     with col2:
-        chi_phi_khac = st.number_input("3. CÁC CHI PHÍ KHÁC (Marketing, Nhân sự, Phí sàn...)", min_value=0, step=50000)
+        chi_phi_khac = st.number_input("3. CÁC CHI PHÍ KHÁC (Marketing, Phí sàn...)", min_value=0, step=50000)
         loi_nhuan_cu = st.number_input("4. Tổng tiền lời ĐÃ CHỐT của các tháng trước", min_value=0, step=100000)
     
     if st.button("🧮 TÍNH LỢI NHUẬN THỰC TẾ", type="primary", use_container_width=True):
@@ -256,25 +255,20 @@ elif menu == "💰 Tính Lãi / Dòng Tiền":
             tong_ton = 0
             if not df_ton.empty:
                 df_ton['Ngày chốt'] = pd.to_datetime(df_ton['Ngày chốt'], errors='coerce')
-                ngay_chot_cuoi = df_ton['Ngày chốt'].max()
-                df_ton_cuoi = df_ton[df_ton['Ngày chốt'] == ngay_chot_cuoi]
+                df_ton_cuoi = df_ton[df_ton['Ngày chốt'] == df_ton['Ngày chốt'].max()]
                 tong_ton = pd.to_numeric(df_ton_cuoi['Tổng giá trị'], errors='coerce').sum()
             
-            # Áp dụng công thức có trừ thêm phí khác
             loi_nhuan_thuc = (tien_rut + tien_giu) - tong_nhap - tong_nvl - chi_phi_khac + tong_ton - loi_nhuan_cu
-            tong_chi_phi_all = tong_nhap + tong_nvl + chi_phi_khac
             
             st.divider()
             st.markdown(f"### 🏆 Báo cáo kết quả {thang_tinh}")
             c1, c2, c3 = st.columns(3)
             c1.metric("Doanh thu về (Rút + Giữ)", f"{tien_rut + tien_giu:,.0f} đ")
-            c2.metric("Tổng TẤT CẢ Chi phí", f"{tong_chi_phi_all:,.0f} đ", help="Bao gồm: Nhập hàng + NVL + Chi phí khác")
+            c2.metric("Tổng TẤT CẢ Chi phí", f"{tong_nhap + tong_nvl + chi_phi_khac:,.0f} đ")
             c3.metric("Giá trị tồn kho hiện tại", f"{tong_ton:,.0f} đ")
             
-            if loi_nhuan_thuc > 0:
-                st.success(f"## 🚀 LỢI NHUẬN THỰC TẾ: + {loi_nhuan_thuc:,.0f} VNĐ")
-            else:
-                st.error(f"## 📉 ĐANG ÂM VỐN: {loi_nhuan_thuc:,.0f} VNĐ")
+            if loi_nhuan_thuc > 0: st.success(f"## 🚀 LỢI NHUẬN THỰC TẾ: + {loi_nhuan_thuc:,.0f} VNĐ")
+            else: st.error(f"## 📉 ĐANG ÂM VỐN: {loi_nhuan_thuc:,.0f} VNĐ")
                 
             sheet_taichinh.append_row([thang_tinh, tien_rut, tien_giu, chi_phi_khac, loi_nhuan_cu], value_input_option='USER_ENTERED')
 
