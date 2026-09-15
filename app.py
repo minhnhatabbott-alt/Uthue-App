@@ -12,7 +12,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 # ================= CẤU HÌNH HỆ THỐNG =================
 # BẠN HÃY DÁN LINK GOOGLE SHEETS CỦA BẠN VÀO DẤU NGOẶC KÉP BÊN DƯỚI:
-SHEET_URL = "https://drive.google.com/drive/folders/1Qm_aSUDZhuxY_kCot1JhzRCyJsJYLFja"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1US5XRg-SnhQt8dy2CVlBMTifiu0lWjoqYS6Q0_GbbZk/edit?gid=0#gid=0"
 DRIVE_FOLDER_ID = "kCot1JhzRCyJsJYLFja"
 
 st.set_page_config(page_title="Bách Hóa Sữa Út Huệ", page_icon="🍼", layout="wide")
