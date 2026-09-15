@@ -255,7 +255,8 @@ elif menu == "💰 Tính Lãi / Dòng Tiền":
             tong_ton = 0
             if not df_ton.empty:
                 df_ton['Ngày chốt'] = pd.to_datetime(df_ton['Ngày chốt'], errors='coerce')
-                df_ton_cuoi = df_ton[df_ton['Ngày chốt'] == df_ton['Ngày chốt'].max()]
+                # Lấy số liệu tồn mới nhất cho phần tính lãi
+                df_ton_cuoi = df_ton.sort_values('Ngày chốt').drop_duplicates(subset=['Tên Kho', 'Tên sản phẩm'], keep='last')
                 tong_ton = pd.to_numeric(df_ton_cuoi['Tổng giá trị'], errors='coerce').sum()
             
             loi_nhuan_thuc = (tien_rut + tien_giu) - tong_nhap - tong_nvl - chi_phi_khac + tong_ton - loi_nhuan_cu
@@ -272,25 +273,23 @@ elif menu == "💰 Tính Lãi / Dòng Tiền":
                 
             sheet_taichinh.append_row([thang_tinh, tien_rut, tien_giu, chi_phi_khac, loi_nhuan_cu], value_input_option='USER_ENTERED')
 
-# --- ĐÃ NÂNG CẤP TRANG BÁO CÁO TỔNG HỢP (VẼ BIỂU ĐỒ TỪ DATA CŨ) ---
+# --- ĐÃ NÂNG CẤP TRANG BÁO CÁO TỔNG HỢP ---
 elif menu == "📊 Báo Cáo Tổng Hợp":
     st.header("📊 Bảng Điều Khiển Bách Hóa Út Huệ")
     df_db = load_df(sheet_nhaphang)
+    df_ton = load_df(sheet_tonkho) # Tải thêm dữ liệu kho
     
     if not df_db.empty:
-        # Ép kiểu dữ liệu để phân tích (không làm ảnh hưởng Sheets)
         df_db['Số lượng'] = pd.to_numeric(df_db['Số lượng'], errors='coerce').fillna(0)
         df_db['Giá nhập'] = pd.to_numeric(df_db['Giá nhập'], errors='coerce').fillna(0)
         df_db['Tổng tiền'] = pd.to_numeric(df_db['Tổng tiền'], errors='coerce').fillna(0)
         df_db['Ngày nhập'] = pd.to_datetime(df_db['Ngày nhập'], errors='coerce')
         
-        # Bỏ qua các dòng số lượng 0 (như dòng Hóa đơn bổ sung)
         df_valid = df_db[df_db['Số lượng'] > 0]
         
         st.divider()
         st.subheader("1. Tổng quan các Kho hàng (Sản phẩm & Dòng tiền)")
         
-        # Gom nhóm dữ liệu theo Kho
         tong_kho = df_valid.groupby('Tên Kho').agg(
             Tong_SP=('Số lượng', 'sum'),
             Tong_Tien=('Tổng tiền', 'sum')
@@ -310,7 +309,7 @@ elif menu == "📊 Báo Cáo Tổng Hợp":
         
         st.divider()
         st.subheader("2. Phân tích chi tiết từng Kho hàng")
-        kho_duoc_chon = st.selectbox("Chọn Kho bạn muốn xem:", ["Tất cả các Kho"] + DANH_SACH_KHO)
+        kho_duoc_chon = st.selectbox("Chọn Kho bạn muốn xem (Nhập hàng):", ["Tất cả các Kho"] + DANH_SACH_KHO)
         
         if kho_duoc_chon == "Tất cả các Kho":
             df_kho = df_valid
@@ -318,13 +317,11 @@ elif menu == "📊 Báo Cáo Tổng Hợp":
             df_kho = df_valid[df_valid['Tên Kho'] == kho_duoc_chon]
             
         if not df_kho.empty:
-            # Biểu đồ cột: Số lượng từng mặt hàng trong kho
             sp_nhap = df_kho.groupby('Tên sản phẩm')['Số lượng'].sum().reset_index()
-            fig_bar = px.bar(sp_nhap, x='Tên sản phẩm', y='Số lượng', title=f"Số lượng các mặt hàng đã nhập ({kho_duoc_chon})", color='Tên sản phẩm')
+            fig_bar = px.bar(sp_nhap, x='Tên sản phẩm', y='Số lượng', title=f"Số lượng các mặt hàng đã nhập ({kho_duoc_chon})", color='Tên sản phẩm', text_auto=True)
             st.plotly_chart(fig_bar, use_container_width=True)
             
             st.subheader("3. Biến thiên Giá vốn của từng sản phẩm")
-            st.caption("Giúp bạn theo dõi NPP (Nhà phân phối) đang tăng hay giảm giá theo thời gian.")
             sp_duoc_chon = st.multiselect("Chọn các sản phẩm để so sánh giá:", DANH_SACH_SAN_PHAM, default=DANH_SACH_SAN_PHAM[:2])
             
             if sp_duoc_chon:
@@ -336,6 +333,43 @@ elif menu == "📊 Báo Cáo Tổng Hợp":
                 st.info("Vui lòng chọn ít nhất 1 sản phẩm để vẽ biểu đồ biến thiên giá.")
         else:
             st.warning(f"Kho '{kho_duoc_chon}' hiện chưa có dữ liệu nhập hàng.")
+            
+        # ============ PHẦN BỔ SUNG: TỒN KHO THỰC TẾ ============
+        st.divider()
+        st.subheader("4. Tình hình Tồn Kho Thực Tế (Lần chốt gần nhất)")
+        
+        if not df_ton.empty:
+            df_ton['Số lượng tồn'] = pd.to_numeric(df_ton['Số lượng tồn'], errors='coerce').fillna(0)
+            df_ton['Tổng giá trị'] = pd.to_numeric(df_ton['Tổng giá trị'], errors='coerce').fillna(0)
+            df_ton['Ngày chốt'] = pd.to_datetime(df_ton['Ngày chốt'], errors='coerce')
+            
+            # Lọc ra lần chốt kho mới nhất cho mỗi sản phẩm tại mỗi kho
+            df_ton_latest = df_ton.sort_values('Ngày chốt').drop_duplicates(subset=['Tên Kho', 'Tên sản phẩm'], keep='last')
+            df_ton_latest = df_ton_latest[df_ton_latest['Số lượng tồn'] > 0] # Chỉ lấy những mặt hàng còn tồn > 0
+            
+            if not df_ton_latest.empty:
+                col_chart, col_data = st.columns([2, 1])
+                
+                with col_chart:
+                    fig_tonkho = px.bar(
+                        df_ton_latest, 
+                        x='Tên sản phẩm', 
+                        y='Số lượng tồn', 
+                        color='Tên Kho', 
+                        barmode='group', 
+                        text_auto=True,
+                        title="Số lượng Tồn kho Thực tế đang có"
+                    )
+                    st.plotly_chart(fig_tonkho, use_container_width=True)
+                    
+                with col_data:
+                    st.markdown("**Bảng Giá trị Tồn (Quy ra Tiền):**")
+                    df_ton_show = df_ton_latest[['Tên Kho', 'Tên sản phẩm', 'Số lượng tồn', 'Tổng giá trị']]
+                    st.dataframe(df_ton_show.style.format({'Số lượng tồn': '{:,.0f}', 'Tổng giá trị': '{:,.0f}'}), hide_index=True, use_container_width=True)
+            else:
+                st.info("Tất cả các kho hiện tại đã xuất hết hàng (Tồn = 0) theo lần chốt gần nhất.")
+        else:
+            st.info("Bạn chưa có dữ liệu Chốt Tồn Kho. Hãy vào mục '📦 Tồn Kho Thực Tế' để chốt kho lần đầu nhé.")
             
     else:
         st.info("Chưa có dữ liệu nhập hàng trên Google Sheets.")
