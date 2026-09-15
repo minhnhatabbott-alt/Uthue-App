@@ -14,7 +14,7 @@ from googleapiclient.http import MediaIoBaseUpload
 st.set_page_config(page_title="Bách Hóa Út Huệ - ERP", page_icon="🍼", layout="wide")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1US5XRg-SnhQt8dy2CVlBMTifiu0lWjoqYS6Q0_GbbZk/edit?gid=0#gid=0"
-DRIVE_FOLDER_ID = "kCot1JhzRCyJsJYLFja"
+DRIVE_FOLDER_ID = "1Qm_aSUDZhuxY_kCot1JhzRCyJsJYLFja"
 
 DANH_SACH_SAN_PHAM = [
     "Ensure Inmune", "Abbott Grow 110ml", "Pediasure 110ml", 
