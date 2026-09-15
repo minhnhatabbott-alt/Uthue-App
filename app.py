@@ -4,7 +4,7 @@ import plotly.express as px
 from datetime import datetime
 import json
 import base64
-import urllib.request
+import requests  # Thay thế urllib bằng requests ổn định hơn rất nhiều
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -13,7 +13,7 @@ st.set_page_config(page_title="Bách Hóa Út Huệ - ERP", page_icon="🍼", la
 
 # BẠN HÃY DÁN CÁC LINK CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1US5XRg-SnhQt8dy2CVlBMTifiu0lWjoqYS6Q0_GbbZk/edit?gid=0#gid=0"
-GAS_URL = "https://script.google.com/macros/s/AKfycbyO_LOhVAS1lNjWEUTgL4fhvAo9GBUwHxcuevtLK7Gw_TnIHtwRDHDeXEYxJBn1yrOG/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbwWlE7EenaMd_6l27rHVGwe4K9-u66-pg4xByj7v49xbS2wm8336sneVEXvf2D_iby_/exec"
 DRIVE_FOLDER_ID = "1Qm_aSUDZhuxY_kCot1JhzRCyJsJYLFja"
 
 DANH_SACH_SAN_PHAM = [
@@ -63,7 +63,7 @@ except Exception as e:
     st.error(f"Lỗi kết nối CSDL: {e}")
     st.stop()
 
-# ================= CÔNG NGHỆ UPLOAD MỚI (CHẠY BẰNG QUYỀN CỦA BẠN) =================
+# ================= CÔNG NGHỆ UPLOAD MỚI (DÙNG REQUESTS) =================
 def upload_to_drive(file_buffer, file_name, mime_type):
     encoded_string = base64.b64encode(file_buffer).decode('utf-8')
     payload = {
@@ -72,10 +72,13 @@ def upload_to_drive(file_buffer, file_name, mime_type):
         "mimeType": mime_type,
         "fileData": encoded_string
     }
-    data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(GAS_URL, data=data, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req) as response:
-        return response.read().decode('utf-8')
+    # Sử dụng requests để tránh lỗi HTTPError của urllib
+    response = requests.post(GAS_URL, json=payload)
+    
+    if response.status_code == 200:
+        return response.text
+    else:
+        return f"Lỗi upload: {response.status_code}"
 
 def load_df(sheet_obj):
     records = sheet_obj.get_all_records()
